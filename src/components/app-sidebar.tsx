@@ -30,7 +30,7 @@ export const LIBRARY_ASK_MAX_WIDTH = 720;
 
 type AppSidebarLeftProps = {
   repositories: Doc<"repositories">[] | undefined;
-  activeRepositoryId: RepositoryId | null;
+  selectedRepositoryId: RepositoryId | null;
   onSwitchRepository: (id: RepositoryId) => void;
   onImported: OnImportedCallback;
   onError: (message: string | null) => void;
@@ -62,7 +62,7 @@ type AppSidebarLeftProps = {
 export function AppSidebarLeft(props: AppSidebarLeftProps) {
   const {
     repositories,
-    activeRepositoryId,
+    selectedRepositoryId,
     onSwitchRepository,
     onImported,
     onError,
@@ -78,11 +78,11 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
     isUnseen,
   } = props;
   const navigate = useNavigate();
-  const { mode, availability } = useChatMode(activeRepositoryId);
+  const { mode, availability } = useChatMode(selectedRepositoryId);
   const lastMode = useMemo(() => {
-    if (!activeRepositoryId || !repositories) return null;
-    return repositories.find((repo) => repo._id === activeRepositoryId)?.lastMode ?? null;
-  }, [repositories, activeRepositoryId]);
+    if (!selectedRepositoryId || !repositories) return null;
+    return repositories.find((repo) => repo._id === selectedRepositoryId)?.lastMode ?? null;
+  }, [repositories, selectedRepositoryId]);
   const effectiveChatMode = resolveEffectiveChatMode({ mode, lastMode, availability });
 
   const isLibraryMode = effectiveChatMode === "library";
@@ -120,9 +120,9 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
         </div>
       </SidebarHeader>
 
-      {activeRepositoryId !== null ? (
+      {selectedRepositoryId !== null ? (
         <RepositoryModeSwitcher
-          repositoryId={activeRepositoryId}
+          repositoryId={selectedRepositoryId}
           mode={effectiveChatMode}
           availability={availability}
         />
@@ -139,7 +139,7 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
             className="min-h-0 flex-1"
           />
         </SidebarContent>
-      ) : activeRepositoryId === null ? (
+      ) : selectedRepositoryId === null ? (
         <SidebarContent className="flex min-h-0 flex-1 flex-col">
           <RepolessChatsRail
             selectedThreadId={selectedThreadId}
@@ -152,7 +152,7 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
       ) : (
         <SidebarContent className="flex min-h-0 flex-1 flex-col">
           <RepositoryThreadsRail
-            repositoryId={activeRepositoryId}
+            repositoryId={selectedRepositoryId}
             repositories={repositories}
             threadMode={effectiveChatMode}
             selectedThreadId={selectedThreadId}
@@ -173,7 +173,7 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
           <ProfileCard />
           <RepositorySelector
             repositories={repositories}
-            activeRepositoryId={activeRepositoryId}
+            selectedRepositoryId={selectedRepositoryId}
             onSwitchRepository={handleSwitchRepository}
             onSelectNoRepository={handleSelectNoRepository}
             onImported={onImported}
@@ -187,7 +187,7 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
 }
 
 type AppSidebarRightProps = {
-  activeRepositoryId: RepositoryId;
+  repositoryId: RepositoryId;
   askThreadId: ThreadId | null;
   activeArtifactId: ArtifactId | null;
   /**
@@ -215,7 +215,7 @@ type AppSidebarRightProps = {
  * Right Library-mode sidebar — mounts only in Library.
  */
 export function AppSidebarRight({
-  activeRepositoryId,
+  repositoryId,
   askThreadId,
   activeArtifactId,
   hasArtifacts,
@@ -238,7 +238,7 @@ export function AppSidebarRight({
     >
       <div className="flex min-h-0 flex-1 flex-col">
         <LibraryAskPanel
-          repositoryId={activeRepositoryId}
+          repositoryId={repositoryId}
           threadId={askThreadId}
           activeArtifactId={activeArtifactId}
           hasArtifacts={hasArtifacts}

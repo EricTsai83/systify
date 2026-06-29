@@ -38,7 +38,6 @@ type RepositoryDetail = ReturnType<typeof useQuery<typeof api.repositories.getRe
 
 export type RepositoryWorkspaceState = {
   repositories: Doc<"repositories">[] | undefined;
-  activeRepositoryId: RepositoryId | null;
   selectedRepositoryId: RepositoryId | null;
   artifactRepositoryId: RepositoryId | null;
   selectedThreadId: ThreadId | null;
@@ -131,14 +130,8 @@ export function useRepositoryWorkspaceState({
   const viewerAccess = useViewerAccess();
   const suppressThreadAutoOpen = urlThreadId === null && isNewThreadRoute;
 
-  const {
-    repositories,
-    touchRepository,
-    activeRepositoryId,
-    currentRepositoryId,
-    currentRepository,
-    handleSwitchRepository,
-  } = useRepositoryPersistence({ urlRepositoryId, navigate });
+  const { repositories, touchRepository, currentRepositoryId, currentRepository, handleSwitchRepository } =
+    useRepositoryPersistence({ urlRepositoryId, navigate });
 
   const { mode, availability } = useChatMode(currentRepositoryId);
   const landingDecision = useRepositoryLandingDecision({
@@ -422,7 +415,6 @@ export function useRepositoryWorkspaceState({
 
   return {
     repositories,
-    activeRepositoryId,
     selectedRepositoryId,
     artifactRepositoryId,
     selectedThreadId,

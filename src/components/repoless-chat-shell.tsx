@@ -214,7 +214,7 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
     <>
       <AppSidebarLeft
         repositories={repositories}
-        activeRepositoryId={null}
+        selectedRepositoryId={null}
         onSwitchRepository={handleSwitchRepository}
         selectedThreadId={urlThreadId}
         onSelectThread={handleSelectThread}

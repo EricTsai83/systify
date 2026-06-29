@@ -284,7 +284,7 @@ function LibraryRepository({
     <>
       <AppSidebarLeft
         repositories={repositories}
-        activeRepositoryId={repositoryId}
+        selectedRepositoryId={repositoryId}
         onSwitchRepository={handleSwitchRepository}
         selectedThreadId={null}
         onSelectThread={() => {}}
@@ -318,7 +318,7 @@ function LibraryRepository({
         </div>
       </SidebarInset>
       <AppSidebarRight
-        activeRepositoryId={repositoryId}
+        repositoryId={repositoryId}
         askThreadId={askThreadId}
         activeArtifactId={tabs.activeArtifactId}
         hasArtifacts={hasArtifacts}

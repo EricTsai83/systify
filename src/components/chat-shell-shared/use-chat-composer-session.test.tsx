@@ -137,14 +137,14 @@ describe("useChatComposerSession", () => {
 
   test("same new-thread id keeps grounding exclusive and does not share it across repositories", () => {
     const { result, rerender } = renderHook(
-      ({ activeRepositoryId }) =>
+      ({ repositoryId }) =>
         useChatComposerSession({
           surface: "repository",
           threadId: null,
-          repositoryId: activeRepositoryId,
+          repositoryId,
           mode: "discuss",
           capabilities: capabilities({
-            attachedRepository: { id: activeRepositoryId, fullName: "owner/repo", shortName: "repo" },
+            attachedRepository: { id: repositoryId, fullName: "owner/repo", shortName: "repo" },
           }),
           groundingAvailability: enabledGrounding(),
           viewerAccess: viewerAccess(),
@@ -154,7 +154,7 @@ describe("useChatComposerSession", () => {
           onAfterCreateThread: vi.fn(),
         }),
       {
-        initialProps: { activeRepositoryId: repositoryId },
+        initialProps: { repositoryId },
       },
     );
 
@@ -165,7 +165,7 @@ describe("useChatComposerSession", () => {
     expect(result.current.tools.grounding?.groundLibrary).toBe(false);
     expect(result.current.tools.grounding?.groundSandbox).toBe(true);
 
-    rerender({ activeRepositoryId: secondRepositoryId });
+    rerender({ repositoryId: secondRepositoryId });
 
     expect(result.current.tools.grounding?.groundLibrary).toBe(false);
     expect(result.current.tools.grounding?.groundSandbox).toBe(false);

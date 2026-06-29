@@ -9,15 +9,15 @@ describe("resolveRepositorySelection", () => {
     expect(
       resolveRepositorySelection({
         urlRepositoryId: null,
-        activeRepositoryId: repo("local"),
-        dbRepositoryId: repo("db"),
+        cachedRepositoryId: repo("local"),
+        preferenceRepositoryId: repo("db"),
         switcherRepositoryIds: [repo("db"), repo("local")],
         ownerRepositoryIds: new Set([repo("db"), repo("local")]),
       }),
     ).toEqual({
-      activeRepositoryId: repo("db"),
+      cachedRepositoryId: repo("db"),
       currentRepositoryId: repo("db"),
-      commands: [{ kind: "setActiveRepository", repositoryId: repo("db") }],
+      commands: [{ kind: "setCachedRepository", repositoryId: repo("db") }],
     });
   });
 
@@ -25,13 +25,13 @@ describe("resolveRepositorySelection", () => {
     expect(
       resolveRepositorySelection({
         urlRepositoryId: repo("url"),
-        activeRepositoryId: repo("db"),
-        dbRepositoryId: repo("db"),
+        cachedRepositoryId: repo("db"),
+        preferenceRepositoryId: repo("db"),
         switcherRepositoryIds: [repo("db"), repo("url")],
         ownerRepositoryIds: new Set([repo("db"), repo("url")]),
       }).commands,
     ).toEqual([
-      { kind: "setActiveRepository", repositoryId: repo("url") },
+      { kind: "setCachedRepository", repositoryId: repo("url") },
       { kind: "touchRepository", repositoryId: repo("url") },
     ]);
   });
@@ -40,13 +40,13 @@ describe("resolveRepositorySelection", () => {
     expect(
       resolveRepositorySelection({
         urlRepositoryId: repo("gone"),
-        activeRepositoryId: repo("live"),
-        dbRepositoryId: repo("live"),
+        cachedRepositoryId: repo("live"),
+        preferenceRepositoryId: repo("live"),
         switcherRepositoryIds: [repo("live")],
         ownerRepositoryIds: new Set([repo("live")]),
       }),
     ).toEqual({
-      activeRepositoryId: repo("live"),
+      cachedRepositoryId: repo("live"),
       currentRepositoryId: null,
       commands: [{ kind: "navigateDefault", replace: true }],
     });
@@ -56,40 +56,40 @@ describe("resolveRepositorySelection", () => {
     expect(
       resolveRepositorySelection({
         urlRepositoryId: null,
-        activeRepositoryId: null,
-        dbRepositoryId: null,
+        cachedRepositoryId: null,
+        preferenceRepositoryId: null,
         switcherRepositoryIds: [repo("recent")],
         ownerRepositoryIds: new Set([repo("recent")]),
       }).commands,
     ).toEqual([
-      { kind: "setActiveRepository", repositoryId: repo("recent") },
+      { kind: "setCachedRepository", repositoryId: repo("recent") },
       { kind: "touchRepository", repositoryId: repo("recent") },
     ]);
   });
 
-  test("deleted repository id clears active state when there is no fallback", () => {
+  test("deleted repository id clears cached state when there is no fallback", () => {
     expect(
       resolveRepositorySelection({
         urlRepositoryId: null,
-        activeRepositoryId: repo("gone"),
-        dbRepositoryId: repo("gone"),
+        cachedRepositoryId: repo("gone"),
+        preferenceRepositoryId: repo("gone"),
         switcherRepositoryIds: [],
         ownerRepositoryIds: new Set(),
       }).commands,
-    ).toEqual([{ kind: "setActiveRepository", repositoryId: null }]);
+    ).toEqual([{ kind: "setCachedRepository", repositoryId: null }]);
   });
 
-  test("live active repo outside the switcher top page is not overwritten", () => {
+  test("live cached repo outside the switcher top page is not overwritten", () => {
     expect(
       resolveRepositorySelection({
         urlRepositoryId: null,
-        activeRepositoryId: repo("outside_top_20"),
-        dbRepositoryId: null,
+        cachedRepositoryId: repo("outside_top_20"),
+        preferenceRepositoryId: null,
         switcherRepositoryIds: [repo("recent")],
         ownerRepositoryIds: new Set([repo("outside_top_20"), repo("recent")]),
       }),
     ).toEqual({
-      activeRepositoryId: repo("outside_top_20"),
+      cachedRepositoryId: repo("outside_top_20"),
       currentRepositoryId: repo("outside_top_20"),
       commands: [],
     });

@@ -25,7 +25,7 @@ import type { OnImportedCallback, RepositoryId } from "@/lib/types";
 // compact profile avatar in the sidebar footer row.
 export const RepositorySelector = memo(function RepositorySelector({
   repositories,
-  activeRepositoryId,
+  selectedRepositoryId,
   onSwitchRepository,
   onSelectNoRepository,
   onImported,
@@ -33,7 +33,7 @@ export const RepositorySelector = memo(function RepositorySelector({
   portalInAnchor = false,
 }: {
   repositories: Doc<"repositories">[] | undefined;
-  activeRepositoryId: RepositoryId | null;
+  selectedRepositoryId: RepositoryId | null;
   onSwitchRepository: (id: RepositoryId) => void;
   // When supplied, the combobox surfaces a "No repository" row that
   // navigates the user back to the repoless `/chat` surface.
@@ -42,8 +42,8 @@ export const RepositorySelector = memo(function RepositorySelector({
   importDisabledReason?: string;
   portalInAnchor?: boolean;
 }) {
-  const activeRepository = repositories?.find((repo) => repo._id === activeRepositoryId);
-  const isRepoless = activeRepositoryId === null;
+  const selectedRepository = repositories?.find((repo) => repo._id === selectedRepositoryId);
+  const isRepoless = selectedRepositoryId === null;
   // Controlled so footer rows can imperatively close the popover before
   // navigating / opening a dialog.
   const [popoverOpen, setPopoverOpen] = useState(false);
@@ -70,10 +70,10 @@ export const RepositorySelector = memo(function RepositorySelector({
     <>
       <Combobox<Doc<"repositories">>
         items={repositories}
-        value={activeRepository ?? null}
+        value={selectedRepository ?? null}
         onValueChange={(repo) => {
           setPopoverOpen(false);
-          if (repo && repo._id !== activeRepositoryId) onSwitchRepository(repo._id);
+          if (repo && repo._id !== selectedRepositoryId) onSwitchRepository(repo._id);
         }}
         itemToStringLabel={(repo) => repo.sourceRepoFullName}
         itemToStringValue={(repo) => repo._id}
@@ -94,7 +94,7 @@ export const RepositorySelector = memo(function RepositorySelector({
             icon={<CaretUpDownIcon weight="bold" className="size-3.5 shrink-0 text-muted-foreground" />}
           >
             <span className="min-w-0 flex-1 truncate text-sm font-medium">
-              {activeRepository?.sourceRepoFullName ?? (isRepoless ? "No repository" : "Select repository")}
+              {selectedRepository?.sourceRepoFullName ?? (isRepoless ? "No repository" : "Select repository")}
             </span>
           </ComboboxTrigger>
         </div>

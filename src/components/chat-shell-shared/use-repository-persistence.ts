@@ -25,9 +25,9 @@ export interface RepositoryPersistence {
    * eliminating the DB-wins effect's "bounce back" race on rapid switches.
    */
   touchRepository: ReactMutation<typeof api.repositoryPreferences.touchRepository>;
-  /** First-paint repository id (localStorage cache + fallback selection). */
-  activeRepositoryId: RepositoryId | null;
-  /** `urlRepositoryId ?? activeRepositoryId` — the canonical current repository. */
+  /** First-paint repository id from localStorage, reconciled after Convex hydrates. */
+  cachedRepositoryId: RepositoryId | null;
+  /** `urlRepositoryId ?? cachedRepositoryId` — the canonical current repository. */
   currentRepositoryId: RepositoryId | null;
   /** Resolved repository row for `currentRepositoryId`, or `null`. */
   currentRepository: Doc<"repositories"> | null;
@@ -41,7 +41,7 @@ export interface RepositoryPersistence {
  * localStorage is a first-paint cache so we render without flashing
  * before Convex hydrates. The hook owns:
  *
- *   1. `activeRepositoryId` state + localStorage mirror.
+ *   1. `cachedRepositoryId` state + localStorage mirror.
  *   2. DB-wins reconciliation — adopt the canonical repository id whenever
  *      `viewerPreferences` lands on a value that disagrees with local state.
  *   3. Fallback selection — pick the most-recent repository when neither the
@@ -66,18 +66,18 @@ export function useRepositoryPersistence({
     [baseTouchRepository],
   );
 
-  const [activeRepositoryId, setActiveRepositoryId] = useState<RepositoryId | null>(() => {
+  const [cachedRepositoryId, setCachedRepositoryId] = useState<RepositoryId | null>(() => {
     const stored = readString(ACTIVE_REPOSITORY_STORAGE_KEY);
     return stored ? (stored as RepositoryId) : null;
   });
 
   useEffect(() => {
-    if (activeRepositoryId) {
-      writeString(ACTIVE_REPOSITORY_STORAGE_KEY, activeRepositoryId);
+    if (cachedRepositoryId) {
+      writeString(ACTIVE_REPOSITORY_STORAGE_KEY, cachedRepositoryId);
     } else {
       removeKey(ACTIVE_REPOSITORY_STORAGE_KEY);
     }
-  }, [activeRepositoryId]);
+  }, [cachedRepositoryId]);
 
   const repositoryIdsToValidate = useMemo(() => {
     if (repositories === undefined || viewerPreferences === undefined) {
@@ -86,11 +86,11 @@ export function useRepositoryPersistence({
     const ids = new Set<RepositoryId>();
     for (const repository of repositories) ids.add(repository._id);
     if (urlRepositoryId) ids.add(urlRepositoryId);
-    if (activeRepositoryId) ids.add(activeRepositoryId);
-    const dbRepositoryId = viewerPreferences?.lastActiveRepositoryId ?? null;
-    if (dbRepositoryId) ids.add(dbRepositoryId);
+    if (cachedRepositoryId) ids.add(cachedRepositoryId);
+    const preferenceRepositoryId = viewerPreferences?.lastActiveRepositoryId ?? null;
+    if (preferenceRepositoryId) ids.add(preferenceRepositoryId);
     return [...ids].sort();
-  }, [activeRepositoryId, repositories, urlRepositoryId, viewerPreferences]);
+  }, [cachedRepositoryId, repositories, urlRepositoryId, viewerPreferences]);
 
   const liveRepositoryIds = useQuery(
     api.repositoryPreferences.listOwnedRepositoryIdsById,
@@ -108,20 +108,20 @@ export function useRepositoryPersistence({
     }
     return resolveRepositorySelection({
       urlRepositoryId,
-      activeRepositoryId,
-      dbRepositoryId: viewerPreferences?.lastActiveRepositoryId ?? null,
+      cachedRepositoryId,
+      preferenceRepositoryId: viewerPreferences?.lastActiveRepositoryId ?? null,
       switcherRepositoryIds: repositories.map((repo) => repo._id),
       ownerRepositoryIds: ownerRepositoryIdSet,
     });
-  }, [activeRepositoryId, ownerRepositoryIdSet, repositories, urlRepositoryId, viewerPreferences]);
+  }, [cachedRepositoryId, ownerRepositoryIdSet, repositories, urlRepositoryId, viewerPreferences]);
 
   useEffect(() => {
     if (!resolvedSelection) return;
     for (const command of resolvedSelection.commands) {
       switch (command.kind) {
-        case "setActiveRepository":
+        case "setCachedRepository":
           // eslint-disable-next-line react-hooks/set-state-in-effect
-          setActiveRepositoryId(command.repositoryId);
+          setCachedRepositoryId(command.repositoryId);
           break;
         case "touchRepository":
           void touchRepository({ repositoryId: command.repositoryId }).catch((err) => {
@@ -145,7 +145,7 @@ export function useRepositoryPersistence({
   const currentRepositoryId: RepositoryId | null =
     resolvedSelection && Object.prototype.hasOwnProperty.call(resolvedSelection, "currentRepositoryId")
       ? resolvedSelection.currentRepositoryId
-      : (urlRepositoryId ?? activeRepositoryId);
+      : (urlRepositoryId ?? cachedRepositoryId);
   const currentRepository = useMemo(
     () => (currentRepositoryId ? (repositories?.find((repo) => repo._id === currentRepositoryId) ?? null) : null),
     [repositories, currentRepositoryId],
@@ -155,7 +155,7 @@ export function useRepositoryPersistence({
     repositories,
     viewerPreferences,
     touchRepository,
-    activeRepositoryId,
+    cachedRepositoryId,
     currentRepositoryId,
     currentRepository,
     handleSwitchRepository,

@@ -2,14 +2,14 @@
 
 ## Purpose
 
-This document explains how Systify remembers which repository is "currently
-active" for a viewer across sessions, browsers, and devices. It describes
+This document explains how Systify remembers which repository is currently
+selected for a viewer across sessions, browsers, and devices. It describes
 why the system stores that selection in two places, which one is the source
 of truth, and how reconciliation works on load and on switch.
 
 ## The Problem
 
-`RepositoryShell` needs an "active repository" before it can render: the
+`RepositoryShell` needs a selected repository before it can render: the
 sidebar highlights it, thread queries scope to it, and the
 redirect-to-most-recent-thread effect depends on it. The selection has
 three competing requirements:
@@ -19,7 +19,7 @@ three competing requirements:
 2. **Cross-device continuity.** A user who switches repositories on one
    browser expects the next browser / device to land in the same repository
    on next sign-in.
-3. **Resilience to deletion.** If the previously active repository was
+3. **Resilience to deletion.** If the previously selected repository was
    deleted (locally or on another device), the UI must recover instead of
    getting stuck on a dangling id.
 
@@ -47,6 +47,39 @@ The selection lives in two places with explicit roles:
 
 The DB always wins on conflict. The cache exists only to eliminate the
 first-paint flash.
+
+### Selection terminology and resolver pattern
+
+Repository selection has multiple possible sources. The long-term rule is
+that source names must describe where a value came from, while UI names must
+describe the resolved state the user is seeing:
+
+- `urlRepositoryId` is the explicit route intent from `/r/:repositoryId`.
+- `cachedRepositoryId` is the localStorage first-paint cache. It may be stale
+  and must be validated before it is treated as real state.
+- `preferenceRepositoryId` is the DB-backed viewer preference
+  (`userPreferences.lastActiveRepositoryId`). It represents the user's last
+  repository choice across devices; it is not necessarily the repository named
+  by the current URL.
+- `currentRepositoryId` is the resolver output after URL, DB preference,
+  cache, ownership, and fallback rules have been applied.
+- `selectedRepositoryId` is the UI-facing name for the current repository in
+  shell and sidebar components.
+- `repositoryId` is reserved for single-scope components that operate on one
+  already-resolved repository and do not participate in selection.
+
+The system uses a "multi-source state resolver" pattern:
+
+1. collect candidate inputs (`urlRepositoryId`, `cachedRepositoryId`,
+   `preferenceRepositoryId`, switcher ids, and owner ids)
+2. resolve exactly one canonical `currentRepositoryId`
+3. emit commands for required synchronization (`setCachedRepository`,
+   `touchRepository`, or redirect)
+4. expose only resolved state to UI components
+
+This keeps UI components from choosing between partially authoritative
+sources. A sidebar should never decide whether URL, cache, or DB wins; it
+should receive `selectedRepositoryId` and render from that.
 
 ```mermaid
 flowchart TD
@@ -147,7 +180,7 @@ ordered effects:
 1. **First-paint cache.** `useState` initializer reads
    `localStorage["systify.activeRepositoryId"]` synchronously so the first
    render already has a repository id.
-2. **localStorage mirror.** A `useEffect` watches `activeRepositoryId`
+2. **localStorage mirror.** A `useEffect` watches `cachedRepositoryId`
    and writes it back to `localStorage["systify.activeRepositoryId"]`
    whenever it changes (or removes the key when the id becomes `null`).
    This is what keeps the first-paint cache aligned with the
@@ -156,21 +189,21 @@ ordered effects:
 3. **DB-wins reconciliation** (live, not one-shot). Whenever both
    `getViewerPreferences` and the bounded candidate-id ownership probe
    (`listOwnedRepositoryIdsById`) are resolved, if the DB carries a different
-   selection than the local state *and* that repository still exists, the local
-   state is updated to match the DB. No write is issued — the DB is already
-   authoritative. Because the effect re-runs on every change to
+   preference than the cache *and* that repository still exists, the cache is
+   updated to match the DB. No write is issued — the DB is already
+   authoritative. Because resolution re-runs on every change to
    `viewerPreferences`, a switch from another tab propagates here the moment
    Convex pushes the row update.
-4. **Fallback + seeding.** If the active id is missing or no longer valid,
-   pick the most recently accessed repository (from the switcher's 20-row
+4. **Fallback + seeding.** If no URL, preference, or cache can resolve to a
+   live repository, pick the most recently accessed repository (from the switcher's 20-row
    recency window) and call `touchRepository` on it. This both promotes
    the fallback into the DB (so a brand-new browser converges immediately
    on next load) and bumps `lastAccessedAt` so the sidebar order matches
    the actual selection.
 5. **URL → state sync.** When the URL carries a `:repositoryId`, treat it
-   as canonical: adopt it into local state and call `touchRepository` so
-   the DB selection matches the user's just-followed link. A URL pointing
-   at a missing repository bounces to `DEFAULT_AUTHENTICATED_PATH`.
+   as canonical: adopt it into the cache and call `touchRepository` so the
+   DB preference matches the user's just-followed link. A URL pointing at a
+   missing repository bounces to `DEFAULT_AUTHENTICATED_PATH`.
 
 The reconciliation effect does not need a one-shot guard against stale
 in-flight `viewerPreferences` snapshots because `touchRepository` carries
@@ -199,7 +232,7 @@ defense-in-depth for any code path that bypasses the public
 
 ### Orphan cleanup
 
-The active-repository pointer is only one of several localStorage entries
+The cached repository pointer is only one of several localStorage entries
 scoped to a repository — the Library tab strip
 (`systify.library.tabs.{repoId}`), the Ask tab strip
 (`systify.library.askTabs.{repoId}`), the composer draft for a repository
@@ -230,7 +263,7 @@ deleted. The hook handles three trigger paths uniformly:
 
 The hook is intentionally a no-op while the upstream query is still
 loading, so a fresh mount does not mistakenly treat every cached key as an
-orphan during the initial query window. The active-repository pointer
+orphan during the initial query window. The cached repository pointer
 (`systify.activeRepositoryId`) is *not* swept by this hook — the fallback
 effect in `useRepositoryPersistence` already resets it to a surviving
 repository, which is sufficient.
@@ -261,7 +294,7 @@ The cache is preserved (rather than dropped in favor of "wait for the
 query") for two reasons:
 
 1. **First paint matters.** The shell's sidebar, thread list, and
-   redirect-to-most-recent effect all depend on the active repository.
+   redirect-to-most-recent effect all depend on the selected repository.
    Rendering a skeleton until a query resolves produces a visibly worse
    load experience for a value that almost always matches the cache.
 2. **Auth bootstrap latency.** During the WorkOS → Convex token handoff
@@ -313,7 +346,7 @@ repository" signal.
   user's local switch in the same tab) is neutralised by the optimistic
   update on `touchRepository`: the local query cache carries the new
   selection from the moment the user clicks, so the reconciliation effect
-  never observes a "stale DB / fresh local" diff. localStorage stays
+  never observes a "stale DB / fresh cache" diff. localStorage stays
   consistent because every tab mirrors the same canonical id back to disk
   after each reconciliation.
 - **In-flight switch.** When the user explicitly switches repositories,
@@ -323,7 +356,7 @@ repository" signal.
   observes "DB = user's pick" during the entire in-flight window and
   cannot bounce the user back. If the optimistic update is ever rolled
   back (e.g. the mutation throws), Convex restores the prior cache value
-  and the reconciliation effect realigns local state with the server's
+  and the reconciliation effect realigns cached state with the server's
   truth.
 
 ## Trade-Offs
@@ -344,10 +377,12 @@ The design accepts three trade-offs:
 ## Summary
 
 The viewer's current repository is canonically a Convex
-`userPreferences.lastActiveRepositoryId` row, written atomically with
+`userPreferences.lastActiveRepositoryId` preference row, written atomically with
 `repositories.lastAccessedAt` (and optionally `repositories.lastMode`)
 inside `touchRepository`. localStorage is a first-paint cache only. On
-every mount, the shell renders with the cache, adopts the DB value when it
-differs, and seeds the DB from a fallback when no preference exists yet.
+every mount, the resolver starts from the cache when necessary, adopts the
+DB preference when it differs, and seeds the DB from a fallback when no
+preference exists yet. UI components receive only the resolved
+`selectedRepositoryId`.
 Cross-device continuity, instant first paint, and resilience to deletion
 all coexist because the source-of-truth boundary is explicit.

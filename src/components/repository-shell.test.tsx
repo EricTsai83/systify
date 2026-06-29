@@ -72,12 +72,10 @@ describe("RepositoryShell", () => {
     expect(screen.queryByLabelText("artifact-drawer")).not.toBeInTheDocument();
   });
 
-  test("drives the sidebar from the selected repository instead of the persisted active repository", () => {
-    const persistedRepositoryId = "repo_a" as RepositoryId;
+  test("drives the sidebar from the selected repository", () => {
     const selectedRepositoryId = "repo_b" as RepositoryId;
     mocks.useRepositoryWorkspaceState.mockReturnValue(
       makeWorkspace({
-        activeRepositoryId: persistedRepositoryId,
         selectedRepositoryId,
       }),
     );
@@ -86,21 +84,18 @@ describe("RepositoryShell", () => {
 
     expect(mocks.appSidebarLeft).toHaveBeenCalledWith(
       expect.objectContaining({
-        activeRepositoryId: selectedRepositoryId,
+        selectedRepositoryId,
       }),
     );
   });
 });
 
 function makeWorkspace(
-  overrides: Partial<
-    Pick<RepositoryWorkspaceState, "activeRepositoryId" | "selectedRepositoryId" | "artifactRepositoryId">
-  > = {},
+  overrides: Partial<Pick<RepositoryWorkspaceState, "selectedRepositoryId" | "artifactRepositoryId">> = {},
 ): RepositoryWorkspaceState {
   const repositoryId = overrides.selectedRepositoryId ?? ("repo_1" as RepositoryId);
   return {
     repositories: [],
-    activeRepositoryId: overrides.activeRepositoryId ?? repositoryId,
     selectedRepositoryId: overrides.selectedRepositoryId ?? repositoryId,
     artifactRepositoryId: overrides.artifactRepositoryId ?? repositoryId,
     selectedThreadId: null,
