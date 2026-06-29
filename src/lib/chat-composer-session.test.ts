@@ -214,12 +214,12 @@ describe("composer session reducer", () => {
     });
     const settled = reduceComposerSession(state, { type: "sync", inputs: settledInputs });
     expect(getComposerSessionSnapshot({ state: settled, inputs: settledInputs })).toMatchObject({
-      groundLibrary: true,
+      groundLibrary: false,
       groundSandbox: true,
     });
   });
 
-  test("does not carry new-thread grounding across repository switches", () => {
+  test("keeps new-thread grounding mutually exclusive and does not carry it across repository switches", () => {
     const firstRepositoryInputs = composerInputs({ threadId: null });
     const selected = reduceComposerSession(
       reduceComposerSession(createComposerSessionState(firstRepositoryInputs), {
@@ -232,7 +232,7 @@ describe("composer session reducer", () => {
       },
     );
     expect(getComposerSessionSnapshot({ state: selected, inputs: firstRepositoryInputs })).toMatchObject({
-      groundLibrary: true,
+      groundLibrary: false,
       groundSandbox: true,
     });
 

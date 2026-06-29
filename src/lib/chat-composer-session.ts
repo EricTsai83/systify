@@ -108,12 +108,20 @@ export function reduceComposerSession(
     case "setGroundLibrary":
       return {
         ...state,
-        grounding: { ...state.grounding, library: action.value },
+        grounding: {
+          ...state.grounding,
+          library: action.value,
+          sandbox: action.value ? false : state.grounding.sandbox,
+        },
       };
     case "setGroundSandbox":
       return {
         ...state,
-        grounding: { ...state.grounding, sandbox: action.value },
+        grounding: {
+          ...state.grounding,
+          library: action.value ? false : state.grounding.library,
+          sandbox: action.value,
+        },
       };
   }
 }
@@ -182,7 +190,7 @@ function seedComposerGroundingState(inputs: ComposerSessionInputs): ComposerSess
     repositoryId: inputs.repositoryId,
     surface: inputs.surface,
     defaultsSeeded: true,
-    library: inputs.threadId === null ? false : inputs.defaultGroundLibrary,
+    library: inputs.threadId === null ? false : inputs.defaultGroundLibrary && !inputs.defaultGroundSandbox,
     sandbox: inputs.threadId === null ? false : inputs.defaultGroundSandbox,
   };
 }

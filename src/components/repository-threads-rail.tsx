@@ -2,8 +2,6 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { AnimatePresence, motion, useReducedMotion, type Transition } from "motion/react";
 import {
-  GlobeIcon,
-  LockIcon,
   PencilSimpleIcon,
   PlusIcon,
   CaretRightIcon,
@@ -225,7 +223,6 @@ function threadTitleTextClass(compact?: boolean): string {
 
 export function RepositoryThreadsRail({
   repositoryId,
-  repositories,
   threadMode,
   selectedThreadId,
   onSelectThread,
@@ -249,14 +246,6 @@ export function RepositoryThreadsRail({
   const setThreadPinnedMutation = useMutation(api.chat.threads.setThreadPinned);
 
   const threads = useQuery(api.chat.threads.listThreads, repositoryId ? { repositoryId, mode: threadMode } : "skip");
-
-  const repositoriesById = useMemo(() => {
-    const map = new Map<RepositoryId, Doc<"repositories">>();
-    for (const repository of repositories ?? []) {
-      map.set(repository._id, repository);
-    }
-    return map;
-  }, [repositories]);
 
   const [isCreatingThread, handleCreateThread] = useAsyncCallback(
     useCallback(async () => {
@@ -325,7 +314,6 @@ export function RepositoryThreadsRail({
       >
         <ThreadsSection
           threads={threads}
-          repositoriesById={repositoriesById}
           selectedThreadId={selectedThreadId}
           onSelectThread={onSelectThread}
           onDeleteThread={onDeleteThread}
@@ -372,7 +360,6 @@ function ThreadCreateButton({
 
 function ThreadsSection({
   threads,
-  repositoriesById,
   selectedThreadId,
   onSelectThread,
   onDeleteThread,
@@ -381,7 +368,6 @@ function ThreadsSection({
   onError,
 }: {
   threads: Doc<"threads">[] | undefined;
-  repositoriesById: Map<RepositoryId, Doc<"repositories">>;
   selectedThreadId: ThreadId | null;
   onSelectThread: (id: ThreadId | null, mode: ThreadMode) => void;
   onDeleteThread: (id: ThreadId) => void;
@@ -428,7 +414,6 @@ function ThreadsSection({
             <CollapsibleThreadSection label="Pinned" className="pb-3">
               <ThreadsList
                 threads={pinnedThreads}
-                repositoriesById={repositoriesById}
                 selectedThreadId={selectedThreadId}
                 onSelectThread={onSelectThread}
                 onPrewarmThread={prewarmThread}
@@ -463,7 +448,6 @@ function ThreadsSection({
                */}
               <ThreadsList
                 threads={otherThreads}
-                repositoriesById={repositoriesById}
                 selectedThreadId={selectedThreadId}
                 onSelectThread={onSelectThread}
                 onPrewarmThread={prewarmThread}
@@ -482,7 +466,6 @@ function ThreadsSection({
 
 const ThreadsList = memo(function ThreadsList({
   threads,
-  repositoriesById,
   selectedThreadId,
   onSelectThread,
   onPrewarmThread,
@@ -492,7 +475,6 @@ const ThreadsList = memo(function ThreadsList({
   onError,
 }: {
   threads: Doc<"threads">[];
-  repositoriesById: Map<RepositoryId, Doc<"repositories">>;
   selectedThreadId: ThreadId | null;
   onSelectThread: (id: ThreadId | null, mode: ThreadMode) => void;
   onPrewarmThread: (id: ThreadId) => void;
@@ -509,14 +491,12 @@ const ThreadsList = memo(function ThreadsList({
         {threads.map((thread) => {
           const isSelected = selectedThreadId === thread._id;
           const isPinned = Boolean(thread.pinnedAt);
-          const repository = thread.repositoryId ? repositoriesById.get(thread.repositoryId) : undefined;
           return (
             <ThreadRowMotion key={thread._id} shouldReduceMotion={shouldReduceMotion}>
               <ThreadItem
                 thread={thread}
                 isSelected={isSelected}
                 isPinned={isPinned}
-                repository={repository}
                 onSelectThread={onSelectThread}
                 onPrewarmThread={onPrewarmThread}
                 onDeleteThread={onDeleteThread}
@@ -621,7 +601,6 @@ interface ThreadItemBaseProps {
   inputRef: React.RefObject<HTMLInputElement | null>;
   titleTextClass: string;
   titlePrefix?: React.ReactNode;
-  repositoryBadge?: React.ReactNode;
   threadMeta?: React.ReactNode;
 }
 
@@ -634,7 +613,6 @@ function ThreadItemBase({
   inputRef,
   titleTextClass,
   titlePrefix,
-  repositoryBadge,
   threadMeta,
 }: ThreadItemBaseProps) {
   return (
@@ -647,7 +625,6 @@ function ThreadItemBase({
               inputRef={inputRef}
               compact={rowState.compact}
               titleTextClass={titleTextClass}
-              repositoryBadge={repositoryBadge}
               threadMeta={threadMeta}
             />
           ) : (
@@ -657,17 +634,19 @@ function ThreadItemBase({
               actions={actions}
               rename={rename}
               titlePrefix={titlePrefix}
-              repositoryBadge={repositoryBadge}
               threadMeta={threadMeta}
               titleTextClass={titleTextClass}
             />
           )}
-          <ThreadRowActionsOverlay
-            thread={thread}
-            isPinned={rowState.isPinned}
-            onTogglePin={actions.togglePin}
-            onDeleteThread={actions.archive}
-          />
+          {rename.isEditing ? null : (
+            <ThreadRowActionsOverlay
+              thread={thread}
+              isPinned={rowState.isPinned}
+              isSelected={rowState.isSelected}
+              onTogglePin={actions.togglePin}
+              onDeleteThread={actions.archive}
+            />
+          )}
         </div>
       </ContextMenuTrigger>
       <ThreadRowContextMenu
@@ -687,7 +666,6 @@ function ReadonlyThreadRow({
   actions,
   rename,
   titlePrefix,
-  repositoryBadge,
   threadMeta,
   titleTextClass,
 }: {
@@ -696,7 +674,6 @@ function ReadonlyThreadRow({
   actions: ThreadRowActions;
   rename: ThreadRenameState;
   titlePrefix?: React.ReactNode;
-  repositoryBadge?: React.ReactNode;
   threadMeta?: React.ReactNode;
   titleTextClass: string;
 }) {
@@ -708,7 +685,7 @@ function ReadonlyThreadRow({
       onFocus={() => actions.prewarm(thread._id)}
       onKeyDown={rename.handleRowKeyDown}
       aria-keyshortcuts="F2"
-      className={cn("py-1.5 pr-16", rowState.compact && "py-1")}
+      className={cn("py-1.5", rowState.compact && "py-1")}
     >
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1.5">
@@ -720,7 +697,6 @@ function ReadonlyThreadRow({
             {thread.title}
           </p>
         </div>
-        {repositoryBadge}
         {threadMeta}
       </div>
     </SidebarMenuButton>
@@ -732,14 +708,12 @@ function EditableThreadRow({
   inputRef,
   compact,
   titleTextClass,
-  repositoryBadge,
   threadMeta,
 }: {
   rename: ThreadRenameState;
   inputRef: React.RefObject<HTMLInputElement | null>;
   compact: boolean;
   titleTextClass: string;
-  repositoryBadge?: React.ReactNode;
   threadMeta?: React.ReactNode;
 }) {
   return (
@@ -759,7 +733,6 @@ function EditableThreadRow({
             titleTextClass,
           )}
         />
-        {repositoryBadge}
         {threadMeta}
       </div>
     </EditableRowFrame>
@@ -769,20 +742,27 @@ function EditableThreadRow({
 function ThreadRowActionsOverlay({
   thread,
   isPinned,
+  isSelected,
   onTogglePin,
   onDeleteThread,
 }: {
   thread: Doc<"threads">;
   isPinned: boolean;
+  isSelected: boolean;
   onTogglePin: (id: ThreadId, pinned: boolean) => void;
   onDeleteThread: (id: ThreadId) => void;
 }) {
   return (
-    <div className="pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
+    <div
+      className={cn(
+        "pointer-events-none absolute inset-y-px right-0 flex items-center gap-0.5 bg-[color-mix(in_oklab,var(--muted)_60%,var(--background))] pr-1 pl-1 opacity-0 before:absolute before:inset-y-0 before:-left-6 before:w-6 before:bg-gradient-to-r before:from-transparent before:to-[color-mix(in_oklab,var(--muted)_60%,var(--background))] group-hover:opacity-100 group-focus-within:opacity-100",
+        isSelected && "bg-muted before:to-muted",
+      )}
+    >
       <Button
         variant="ghost"
         size="icon"
-        className="pointer-events-auto h-6 w-6 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+        className="pointer-events-auto h-6 w-6 text-muted-foreground hover:text-foreground focus-visible:opacity-100"
         onClick={(event) => {
           event.stopPropagation();
           onTogglePin(thread._id, !isPinned);
@@ -791,12 +771,12 @@ function ThreadRowActionsOverlay({
         aria-pressed={isPinned}
         title={isPinned ? "Unpin thread" : "Pin thread"}
       >
-        {isPinned ? <PushPinSimpleSlashIcon size={13} weight="bold" /> : <PushPinSimpleIcon size={13} weight="bold" />}
+        {isPinned ? <PushPinSimpleSlashIcon size={8} weight="bold" /> : <PushPinSimpleIcon size={8} weight="bold" />}
       </Button>
       <Button
         variant="ghost"
         size="icon"
-        className="pointer-events-auto h-6 w-6 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+        className="pointer-events-auto h-6 w-6 text-muted-foreground hover:text-foreground focus-visible:opacity-100"
         onClick={(event) => {
           event.stopPropagation();
           onDeleteThread(thread._id);
@@ -804,7 +784,7 @@ function ThreadRowActionsOverlay({
         aria-label="Archive thread"
         title="Archive thread"
       >
-        <ArchiveIcon size={13} weight="bold" />
+        <ArchiveIcon size={8} weight="bold" />
       </Button>
     </div>
   );
@@ -855,7 +835,6 @@ function ThreadItem({
   thread,
   isSelected,
   isPinned,
-  repository,
   onSelectThread,
   onPrewarmThread,
   onDeleteThread,
@@ -866,7 +845,6 @@ function ThreadItem({
   thread: Doc<"threads">;
   isSelected: boolean;
   isPinned: boolean;
-  repository: Doc<"repositories"> | undefined;
   onSelectThread: (id: ThreadId | null, mode: ThreadMode) => void;
   onPrewarmThread: (id: ThreadId) => void;
   onDeleteThread: (id: ThreadId) => void;
@@ -922,22 +900,8 @@ function ThreadItem({
       rowRef={rowRef}
       inputRef={inputRef}
       titleTextClass={titleTextClass}
-      repositoryBadge={<ThreadRepoBadge repository={repository} />}
       threadMeta={null}
     />
-  );
-}
-
-function ThreadRepoBadge({ repository }: { repository: Doc<"repositories"> | undefined }) {
-  if (!repository) {
-    return null;
-  }
-  const Icon = repository.visibility === "private" ? LockIcon : GlobeIcon;
-  return (
-    <p className="mt-0.5 flex items-center gap-1 truncate text-[10px] text-muted-foreground/80">
-      <Icon size={9} weight="bold" className="shrink-0" />
-      <span className="truncate">{repository.sourceRepoFullName}</span>
-    </p>
   );
 }
 

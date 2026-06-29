@@ -1,4 +1,3 @@
-import { Fragment } from "react";
 import { BookOpenIcon, FlaskIcon } from "@phosphor-icons/react";
 import type { RepositoryModeDisabledReasonCode } from "../../convex/lib/chatEligibility";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -79,15 +78,15 @@ export function createDiscussGroundingAxes(input: {
 }
 
 /**
- * Per-message grounding toggle bar for Discuss Mode.
+ * Per-message grounding selector for Discuss Mode.
  *
- * Two independent pill toggles — Library (artifact RAG) and Sandbox
- * (live source tools) — that compose freely. When both axes are off the
- * reply is unbound LLM training-only chat; either or both can be on for
- * a grounded reply with the matching citation contract.
+ * A single-select control for Library (artifact RAG), Sandbox (live source
+ * tools), or no per-message grounding. Disabled options expose their reason
+ * through a tooltip. Recoverable Sandbox liveness states stay selectable and
+ * prepare on send.
  *
- * Disabled toggles expose their reason through a tooltip. Recoverable
- * Sandbox liveness states stay selectable and prepare on send.
+ * The session reducer also enforces mutual exclusion so this component and
+ * send-time payloads cannot drift apart.
  */
 export function GroundingToggleBar({ axes, hidden = false, className }: GroundingToggleBarProps) {
   if (hidden) {
@@ -97,22 +96,39 @@ export function GroundingToggleBar({ axes, hidden = false, className }: Groundin
   return (
     <TooltipProvider delayDuration={150}>
       <div
-        role="group"
-        aria-label="Discuss grounding toggles"
-        className={cn("flex flex-wrap items-center gap-2", className)}
+        role="radiogroup"
+        aria-label="Discuss grounding source"
+        className={cn("inline-flex min-w-0 flex-wrap items-center border border-border bg-background", className)}
       >
-        {axes.map((axis, index) => (
-          <Fragment key={axis.id}>
-            {index > 0 ? <span aria-hidden="true" className="h-5 w-px shrink-0 bg-border" /> : null}
-            <GroundingAxisPill axis={axis} />
-          </Fragment>
+        <GroundingNoneOption axes={axes} />
+        {axes.map((axis) => (
+          <GroundingAxisOption key={axis.id} axis={axis} axes={axes} />
         ))}
       </div>
     </TooltipProvider>
   );
 }
 
-function GroundingAxisPill({ axis }: { axis: GroundingAxisControl }) {
+function GroundingNoneOption({ axes }: { axes: readonly GroundingAxisControl[] }) {
+  const active = axes.every((axis) => !axis.active);
+  return (
+    <GroundingOption
+      label="None"
+      active={active}
+      available
+      onSelect={() => {
+        axes.forEach((axis) => {
+          if (axis.active) {
+            axis.onActiveChange(false);
+          }
+        });
+      }}
+      testId="grounding-toggle-none"
+    />
+  );
+}
+
+function GroundingAxisOption({ axis, axes }: { axis: GroundingAxisControl; axes: readonly GroundingAxisControl[] }) {
   const enabled = axis.verdict.enabled;
   const activatable = !axis.verdict.enabled && axis.verdict.isActivatable === true;
   const available = enabled || (axis.id === "sandbox" && activatable);
@@ -123,55 +139,62 @@ function GroundingAxisPill({ axis }: { axis: GroundingAxisControl }) {
   const iconFilled = axis.active && available;
 
   return (
-    <GroundingPill
+    <GroundingOption
       label={axis.label}
       icon={<Icon size={14} weight={iconFilled ? "fill" : "regular"} />}
       active={axis.active}
       available={available}
       reason={reason}
       suffix={suffix}
-      onToggle={() => {
-        if (available) {
-          axis.onActiveChange(!axis.active);
+      onSelect={() => {
+        if (!available || axis.active) {
+          return;
         }
+        axes.forEach((otherAxis) => {
+          if (otherAxis.id !== axis.id && otherAxis.active) {
+            otherAxis.onActiveChange(false);
+          }
+        });
+        axis.onActiveChange(true);
       }}
       testId={`grounding-toggle-${axis.id}`}
     />
   );
 }
 
-type GroundingPillProps = {
+type GroundingOptionProps = {
   label: string;
-  icon: React.ReactNode;
+  icon?: React.ReactNode;
   active: boolean;
   available: boolean;
   reason?: string;
   suffix?: string;
-  onToggle: () => void;
+  onSelect: () => void;
   testId: string;
 };
 
-function GroundingPill({ label, icon, active, available, reason, suffix, onToggle, testId }: GroundingPillProps) {
+function GroundingOption({ label, icon, active, available, reason, suffix, onSelect, testId }: GroundingOptionProps) {
   const title = available ? (suffix ? `${label} grounding (${suffix})` : `${label} grounding`) : reason;
   const button = (
     <button
       type="button"
-      aria-pressed={active}
+      role="radio"
+      aria-checked={active}
       aria-disabled={!available}
-      onClick={onToggle}
+      onClick={onSelect}
       title={title}
       data-testid={testId}
       className={cn(
-        "inline-flex h-7 items-center gap-1.5 border px-2 text-xs font-medium transition-colors",
+        "inline-flex h-7 items-center gap-1.5 border-0 border-r border-border px-2 text-xs font-medium transition-colors last:border-r-0",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
         active && available
-          ? "border-primary/30 bg-primary/10 text-primary hover:bg-primary/15"
+          ? "bg-primary/10 text-primary hover:bg-primary/15"
           : available
-            ? "border-border bg-background text-muted-foreground hover:bg-muted/40 hover:text-foreground"
-            : "cursor-not-allowed border-dashed border-border bg-muted/30 text-muted-foreground/70",
+            ? "bg-background text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+            : "cursor-not-allowed bg-muted/30 text-muted-foreground/70",
       )}
     >
-      {icon}
+      {icon ?? null}
       <span>{label}</span>
       {suffix && available ? (
         <span aria-hidden="true" className="text-[10px] text-muted-foreground/80">

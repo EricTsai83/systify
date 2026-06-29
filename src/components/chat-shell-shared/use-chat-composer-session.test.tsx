@@ -131,11 +131,11 @@ describe("useChatComposerSession", () => {
       capabilities: capabilities({ defaultGroundLibrary: true, defaultGroundSandbox: true }),
     });
 
-    expect(result.current.tools.grounding?.groundLibrary).toBe(true);
+    expect(result.current.tools.grounding?.groundLibrary).toBe(false);
     expect(result.current.tools.grounding?.groundSandbox).toBe(true);
   });
 
-  test("same new-thread id does not share grounding across repositories", () => {
+  test("same new-thread id keeps grounding exclusive and does not share it across repositories", () => {
     const { result, rerender } = renderHook(
       ({ activeRepositoryId }) =>
         useChatComposerSession({
@@ -162,7 +162,7 @@ describe("useChatComposerSession", () => {
       result.current.tools.grounding?.setGroundLibrary(true);
       result.current.tools.grounding?.setGroundSandbox(true);
     });
-    expect(result.current.tools.grounding?.groundLibrary).toBe(true);
+    expect(result.current.tools.grounding?.groundLibrary).toBe(false);
     expect(result.current.tools.grounding?.groundSandbox).toBe(true);
 
     rerender({ activeRepositoryId: secondRepositoryId });
@@ -208,7 +208,7 @@ describe("useChatComposerSession", () => {
       }),
     });
 
-    expect(result.current.tools.grounding?.groundLibrary).toBe(true);
+    expect(result.current.tools.grounding?.groundLibrary).toBe(false);
     expect(result.current.tools.grounding?.groundSandbox).toBe(true);
   });
 

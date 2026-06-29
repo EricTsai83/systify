@@ -9,7 +9,7 @@ afterEach(() => {
 });
 
 describe("GroundingToggleBar", () => {
-  test("recoverable Sandbox state toggles desired grounding and shows prepare-on-send copy", () => {
+  test("recoverable Sandbox state selects desired grounding and shows prepare-on-send copy", () => {
     const setGroundSandbox = vi.fn();
 
     render(
@@ -38,6 +38,54 @@ describe("GroundingToggleBar", () => {
     fireEvent.click(sandboxToggle);
 
     expect(setGroundSandbox).toHaveBeenCalledWith(true);
+  });
+
+  test("selecting Library clears active Sandbox grounding", () => {
+    const setGroundLibrary = vi.fn();
+    const setGroundSandbox = vi.fn();
+
+    render(
+      <GroundingToggleBar
+        axes={createDiscussGroundingAxes({
+          groundLibrary: false,
+          groundSandbox: true,
+          setGroundLibrary,
+          setGroundSandbox,
+          grounding: {
+            library: { enabled: true },
+            sandbox: { enabled: true },
+          },
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("grounding-toggle-library"));
+
+    expect(setGroundSandbox).toHaveBeenCalledWith(false);
+    expect(setGroundLibrary).toHaveBeenCalledWith(true);
+  });
+
+  test("None clears whichever grounding option is active", () => {
+    const setGroundLibrary = vi.fn();
+
+    render(
+      <GroundingToggleBar
+        axes={createDiscussGroundingAxes({
+          groundLibrary: true,
+          groundSandbox: false,
+          setGroundLibrary,
+          setGroundSandbox: vi.fn(),
+          grounding: {
+            library: { enabled: true },
+            sandbox: { enabled: true },
+          },
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("grounding-toggle-none"));
+
+    expect(setGroundLibrary).toHaveBeenCalledWith(false);
   });
 
   test("discuss axis helper returns loading verdicts while availability loads", () => {

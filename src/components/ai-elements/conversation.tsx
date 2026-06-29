@@ -27,6 +27,8 @@ import type { UseChatScrollResult } from "./use-chat-scroll";
  */
 const ConversationScrollContext = createContext<UseChatScrollResult | null>(null);
 
+const STREAM_FOLLOW_SCROLL_EDGE_THRESHOLD_PX = 64;
+
 function useConversationScroll(): UseChatScrollResult {
   const ctx = useContext(ConversationScrollContext);
   if (!ctx) {
@@ -57,7 +59,11 @@ export const Conversation = ({
 }: ConversationProps) => {
   return (
     <ConversationScrollContext.Provider value={scroll}>
-      <MessageScrollerProvider autoScroll defaultScrollPosition="last-anchor">
+      <MessageScrollerProvider
+        autoScroll
+        defaultScrollPosition="last-anchor"
+        scrollEdgeThreshold={STREAM_FOLLOW_SCROLL_EDGE_THRESHOLD_PX}
+      >
         <MessageScroller
           role={role}
           aria-live={ariaLive}
