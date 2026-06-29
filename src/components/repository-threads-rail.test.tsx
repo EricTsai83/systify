@@ -28,6 +28,24 @@ afterEach(() => {
 });
 
 describe("RepolessChatsRail", () => {
+  test("leaves the thread list empty while threads load", () => {
+    vi.mocked(useQuery).mockReturnValue(undefined);
+
+    const { container } = render(
+      <RepolessChatsRail
+        selectedThreadId={null}
+        onSelectThread={vi.fn()}
+        onDeleteThread={vi.fn()}
+        onRequestNewThread={vi.fn()}
+        onError={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /new thread/i })).toBeInTheDocument();
+    expect(screen.queryByText("No conversations yet. Start one above.")).not.toBeInTheDocument();
+    expect(container.querySelector(".animate-pulse")).not.toBeInTheDocument();
+  });
+
   test("separates agents from conversations", () => {
     vi.mocked(useQuery).mockReturnValue([
       makeThread({
@@ -197,6 +215,28 @@ describe("RepolessChatsRail", () => {
 });
 
 describe("RepositoryThreadsRail create controls", () => {
+  test("leaves the repository thread list empty while threads load", () => {
+    vi.mocked(useQuery).mockReturnValue(undefined);
+
+    const { container } = render(
+      <RepositoryThreadsRail
+        repositoryId={"repo_1" as Id<"repositories">}
+        repositories={[]}
+        threadMode="discuss"
+        selectedThreadId={null}
+        onSelectThread={vi.fn()}
+        onDeleteThread={vi.fn()}
+        onError={vi.fn()}
+        createControl={{ kind: "navigate", label: "New thread", onRequestNewThread: vi.fn() }}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /new thread/i })).toBeInTheDocument();
+    expect(screen.queryByText("Threads")).not.toBeInTheDocument();
+    expect(screen.queryByText("No conversations yet. Start one above.")).not.toBeInTheDocument();
+    expect(container.querySelector(".animate-pulse")).not.toBeInTheDocument();
+  });
+
   test("navigate create control does not create a backend thread", () => {
     const createThread = vi.fn();
     const createLibraryAskThread = vi.fn();
