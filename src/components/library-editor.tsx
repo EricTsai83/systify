@@ -1,20 +1,11 @@
-import {
-  type ComponentPropsWithoutRef,
-  type Dispatch,
-  type SetStateAction,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAction, useQuery } from "convex/react";
 import { CheckIcon, CopySimpleIcon, MinusIcon, PlusIcon, SlidersHorizontalIcon, XIcon } from "@phosphor-icons/react";
-import { motion, useReducedMotion } from "motion/react";
 import { toast } from "sonner";
 import { api } from "../../convex/_generated/api";
 import { Markdown, type MermaidRepairRequest } from "@/components/markdown";
 import { Button } from "@/components/ui/button";
+import { FloatingExpandableToolbar } from "@/components/ui/floating-expandable-toolbar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -49,8 +40,6 @@ const FONT_SIZE_STEPS = ["80", "90", "100", "110", "125", "140", "160", "180"] a
 type FontSize = (typeof FONT_SIZE_STEPS)[number];
 const DEFAULT_FONT_SIZE: FontSize = "100";
 const READER_TOOLBAR_ID = "library-reader-tools";
-const READER_TOOLBAR_WIDTH = "calc(100vw - 6rem)";
-const READER_TOOLBAR_TRANSITION = { duration: 0.2, ease: [0.23, 1, 0.32, 1] } as const;
 const UPDATED_AT_FORMATTER = new Intl.DateTimeFormat(undefined, {
   month: "short",
   day: "numeric",
@@ -231,43 +220,6 @@ function ReaderToolbarSeparator({ className }: { className?: string }) {
   return <span aria-hidden="true" className={cn("h-4 w-px shrink-0 bg-border", className)} />;
 }
 
-function useMeasuredWidth<T extends HTMLElement>() {
-  const ref = useRef<T>(null);
-  const [width, setWidth] = useState(0);
-
-  useLayoutEffect(() => {
-    const element = ref.current;
-    if (!element) return;
-
-    const measure = () => {
-      setWidth((currentWidth) => {
-        const nextWidth = Math.ceil(element.scrollWidth);
-        return currentWidth === nextWidth ? currentWidth : nextWidth;
-      });
-    };
-
-    measure();
-
-    if (typeof ResizeObserver === "undefined") return;
-
-    const resizeObserver = new ResizeObserver(measure);
-    resizeObserver.observe(element);
-    return () => resizeObserver.disconnect();
-  }, []);
-
-  return [ref, width] as const;
-}
-
-function useToolbarMotion() {
-  const shouldReduceMotion = useReducedMotion();
-  const reducedMotion = shouldReduceMotion === true;
-
-  return {
-    reducedMotion,
-    transition: reducedMotion ? ({ duration: 0 } as const) : READER_TOOLBAR_TRANSITION,
-  };
-}
-
 function ReaderToolbar({
   expanded,
   onExpandedChange,
@@ -283,7 +235,7 @@ function ReaderToolbar({
   onCopy,
 }: {
   expanded: boolean;
-  onExpandedChange: Dispatch<SetStateAction<boolean>>;
+  onExpandedChange: (next: boolean | ((previous: boolean) => boolean)) => void;
   versions:
     | Array<{
         version: number;
@@ -301,81 +253,40 @@ function ReaderToolbar({
   copied: boolean;
   onCopy: () => void;
 }) {
-  const [toolsContentRef, toolsWidth] = useMeasuredWidth<HTMLDivElement>();
-  const { reducedMotion, transition } = useToolbarMotion();
-  const renderedToolsWidth = expanded ? toolsWidth : 0;
-
   return (
-    <div
-      className={cn(
-        "absolute top-3 right-4 z-10 flex max-w-[calc(100%-2rem)] flex-row-reverse items-center overflow-hidden border p-0.5 transition-[background-color,border-color,box-shadow,backdrop-filter] duration-150 ease-out motion-reduce:transition-none",
-        expanded
-          ? "border-border bg-background/95 shadow-sm backdrop-blur"
-          : "border-transparent bg-transparent shadow-none backdrop-blur-none",
-      )}
+    <FloatingExpandableToolbar
+      expanded={expanded}
+      onExpandedChange={onExpandedChange}
+      controlsId={READER_TOOLBAR_ID}
+      expandLabel="Expand reader tools"
+      collapseLabel="Collapse reader tools"
+      expandIcon={<SlidersHorizontalIcon size={13} weight="bold" />}
+      collapseIcon={<XIcon size={12} weight="bold" />}
       data-testid="reader-toolbar"
     >
-      <div className="flex size-7 shrink-0 items-center justify-center">
-        <ReaderToolbarIconButton
-          aria-label={expanded ? "Collapse reader tools" : "Expand reader tools"}
-          aria-expanded={expanded}
-          aria-controls={READER_TOOLBAR_ID}
-          onClick={() => onExpandedChange((previous) => !previous)}
-        >
-          {expanded ? <XIcon size={12} weight="bold" /> : <SlidersHorizontalIcon size={13} weight="bold" />}
-        </ReaderToolbarIconButton>
-      </div>
-
-      <motion.div
-        initial={false}
-        id={READER_TOOLBAR_ID}
-        aria-hidden={!expanded}
-        inert={!expanded ? true : undefined}
-        animate={{
-          width: renderedToolsWidth,
-          opacity: expanded || reducedMotion ? 1 : 0,
-        }}
-        transition={transition}
-        className={cn("flex justify-end overflow-hidden whitespace-nowrap", !expanded && "pointer-events-none")}
-        style={{ maxWidth: READER_TOOLBAR_WIDTH }}
+      <ArtifactVersionSelect
+        versions={versions}
+        currentVersion={currentVersion}
+        selectedVersion={selectedVersion}
+        onChange={onVersionChange}
+      />
+      {showFontSizeControl ? <FontSizeControl value={fontSize} onChange={onFontSizeChange} /> : null}
+      <ReaderToolbarSeparator />
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="h-6 w-14 shrink-0 gap-1 px-1.5 text-[11px] active:scale-100"
+        onClick={onCopy}
+        disabled={copyIsDisabled}
+        aria-label="Copy markdown"
+        tabIndex={expanded ? undefined : -1}
       >
-        <div ref={toolsContentRef} className="flex w-max shrink-0 flex-nowrap items-center gap-1">
-          <ArtifactVersionSelect
-            versions={versions}
-            currentVersion={currentVersion}
-            selectedVersion={selectedVersion}
-            onChange={onVersionChange}
-          />
-          {showFontSizeControl ? <FontSizeControl value={fontSize} onChange={onFontSizeChange} /> : null}
-          <ReaderToolbarSeparator />
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-6 w-14 shrink-0 gap-1 px-1.5 text-[11px] active:scale-100"
-            onClick={onCopy}
-            disabled={copyIsDisabled}
-            aria-label="Copy markdown"
-            tabIndex={expanded ? undefined : -1}
-          >
-            {copied ? <CheckIcon size={13} weight="bold" /> : <CopySimpleIcon size={13} weight="bold" />}
-            {copied ? "Copied" : "Copy"}
-          </Button>
-          <ReaderToolbarSeparator className="mr-1" />
-        </div>
-      </motion.div>
-    </div>
-  );
-}
-
-function ReaderToolbarIconButton({
-  children,
-  ...props
-}: Omit<ComponentPropsWithoutRef<typeof Button>, "variant" | "size" | "type" | "className">) {
-  return (
-    <Button type="button" variant="ghost" size="sm" className="size-7 p-0 active:scale-100" {...props}>
-      {children}
-    </Button>
+        {copied ? <CheckIcon size={13} weight="bold" /> : <CopySimpleIcon size={13} weight="bold" />}
+        {copied ? "Copied" : "Copy"}
+      </Button>
+      <ReaderToolbarSeparator className="mr-1" />
+    </FloatingExpandableToolbar>
   );
 }
 
