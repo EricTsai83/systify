@@ -7,6 +7,7 @@ import {
   PromptInputSelectTrigger,
   PromptInputSelectValue,
 } from "@/components/ai-elements/prompt-input";
+import { GROUNDING_LOADING_AXIS } from "@/lib/chat-composer-session";
 import { cn } from "@/lib/utils";
 
 /**
@@ -47,12 +48,6 @@ export interface GroundingToggleBarProps {
 
 type GroundingSelectorValue = GroundingAxisId | "none";
 
-const LOADING_GROUNDING_VERDICT: GroundingAxisLike = {
-  enabled: false,
-  code: "loading",
-  message: "Loading grounding availability…",
-};
-
 // eslint-disable-next-line react-refresh/only-export-components
 export function createDiscussGroundingAxes(input: {
   groundLibrary: boolean;
@@ -72,14 +67,14 @@ export function createDiscussGroundingAxes(input: {
       id: "library",
       label: "Library",
       active: input.groundLibrary,
-      verdict: input.grounding?.library ?? LOADING_GROUNDING_VERDICT,
+      verdict: input.grounding?.library ?? GROUNDING_LOADING_AXIS,
       onActiveChange: input.setGroundLibrary,
     },
     {
       id: "sandbox",
       label: "Sandbox",
       active: input.groundSandbox,
-      verdict: input.grounding?.sandbox ?? LOADING_GROUNDING_VERDICT,
+      verdict: input.grounding?.sandbox ?? GROUNDING_LOADING_AXIS,
       onActiveChange: input.setGroundSandbox,
     },
   ];
@@ -124,11 +119,9 @@ export function GroundingToggleBar({ axes, hidden = false, className }: Groundin
     if (!selectedAxis || !isAxisAvailable(selectedAxis)) {
       return;
     }
-    axes.forEach((axis) => {
-      if (axis.id !== selectedAxis.id && axis.active) {
-        axis.onActiveChange(false);
-      }
-    });
+    // Enabling one axis is enough: the session reducer (setGroundLibrary /
+    // setGroundSandbox) clears the other axis automatically, so the bar does
+    // not re-clear it here.
     selectedAxis.onActiveChange(true);
   };
 

@@ -227,6 +227,11 @@ export function useChatComposerSession(args: UseChatComposerSessionArgs): ChatCo
     onAfterCreateThread: args.onAfterCreateThread,
   });
 
+  // Deliberately does not also gate on catalog/grounding readiness: the model
+  // picker degrades gracefully (`Array.isArray(...) ? ... : []`) and the
+  // grounding bar falls back to a loading verdict, so both render immediately
+  // and fill in as their data arrives. The repoless surface still gates on
+  // `extraControlsReady`; that asymmetry is intentional.
   const toolsReady = args.extraControlsReady ?? true;
 
   const accessDisabledReason =

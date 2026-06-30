@@ -86,7 +86,12 @@ export type ComposerAccessResolution = {
 };
 
 const ACCESS_LOADING_REASON = "Loading access...";
-const GROUNDING_LOADING_AXIS = {
+/**
+ * Default grounding-axis verdict used before the eligibility query resolves.
+ * Exported as the single source of truth for the "loading" placeholder so the
+ * Discuss composer (here) and the GroundingToggleBar seed the same shape.
+ */
+export const GROUNDING_LOADING_AXIS = {
   enabled: false,
   code: "loading",
   message: "Loading grounding availability...",

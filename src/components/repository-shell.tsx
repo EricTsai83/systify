@@ -174,8 +174,6 @@ export function RepositoryShell({
             <div className="flex min-h-0 flex-1 flex-col">
               <StatusPanel
                 repository={workspace.repoDetail.repository}
-                sandboxModeStatus={workspace.repoDetail.sandboxModeStatus}
-                sandbox={workspace.repoDetail.sandbox}
                 jobs={workspace.repoDetail.jobs}
                 artifacts={workspace.repoDetail.artifacts}
                 hasRemoteUpdates={workspace.repoDetail.hasRemoteUpdates}

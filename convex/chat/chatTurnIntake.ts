@@ -211,6 +211,13 @@ async function insertChatTurn(
     now: number;
   },
 ): Promise<QueuedChatTurn> {
+  // Grounding axes are mutually exclusive — the client reducer clears the
+  // other axis whenever one is enabled. Normalize here too so the "both axes
+  // true" invariant also holds at the backend boundary if a future send path
+  // ever forgets to clear the other axis.
+  if (args.groundSandbox === true) {
+    args.groundLibrary = false;
+  }
   // Sandbox-grounded Discuss replies use tool calls and the heavier model
   // tier, so they bill against the `system_design` budget line and the
   // daily sandbox cost cap rather than the chat budget.

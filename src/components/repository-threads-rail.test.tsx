@@ -221,7 +221,6 @@ describe("RepositoryThreadsRail create controls", () => {
     const { container } = render(
       <RepositoryThreadsRail
         repositoryId={"repo_1" as Id<"repositories">}
-        repositories={[]}
         threadMode="discuss"
         selectedThreadId={null}
         onSelectThread={vi.fn()}
@@ -250,7 +249,6 @@ describe("RepositoryThreadsRail create controls", () => {
     render(
       <RepositoryThreadsRail
         repositoryId={"repo_1" as Id<"repositories">}
-        repositories={[]}
         threadMode="discuss"
         selectedThreadId={null}
         onSelectThread={vi.fn()}
@@ -282,7 +280,6 @@ describe("RepositoryThreadsRail create controls", () => {
     render(
       <RepositoryThreadsRail
         repositoryId={"repo_1" as Id<"repositories">}
-        repositories={[]}
         threadMode="library"
         selectedThreadId={null}
         onSelectThread={onSelectThread}
@@ -315,7 +312,6 @@ describe("RepositoryThreadsRail create controls", () => {
     render(
       <RepositoryThreadsRail
         repositoryId={"repo_1" as Id<"repositories">}
-        repositories={[]}
         threadMode="discuss"
         selectedThreadId={null}
         onSelectThread={onSelectThread}
@@ -344,7 +340,6 @@ describe("RepositoryThreadsRail create controls", () => {
     render(
       <RepositoryThreadsRail
         repositoryId={null}
-        repositories={[]}
         threadMode="discuss"
         selectedThreadId={null}
         onSelectThread={vi.fn()}

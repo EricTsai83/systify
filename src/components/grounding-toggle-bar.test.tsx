@@ -54,7 +54,7 @@ describe("GroundingToggleBar", () => {
     expect(setGroundSandbox).toHaveBeenCalledWith(true);
   });
 
-  test("selecting Library clears active Sandbox grounding", () => {
+  test("selecting Library enables Library grounding without redundantly clearing Sandbox", () => {
     const setGroundLibrary = vi.fn();
     const setGroundSandbox = vi.fn();
 
@@ -76,8 +76,10 @@ describe("GroundingToggleBar", () => {
     openGroundingSelector();
     fireEvent.click(screen.getByTestId("grounding-toggle-library"));
 
-    expect(setGroundSandbox).toHaveBeenCalledWith(false);
     expect(setGroundLibrary).toHaveBeenCalledWith(true);
+    // Mutual exclusion is enforced by the session reducer (setGroundLibrary
+    // clears sandbox), so the bar does not redundantly clear the other axis.
+    expect(setGroundSandbox).not.toHaveBeenCalled();
   });
 
   test("None clears whichever grounding option is active", () => {

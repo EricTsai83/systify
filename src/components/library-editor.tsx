@@ -100,6 +100,17 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
     [artifact, repairMermaidBlock],
   );
 
+  // Memoized so CopyActionButton's internal click handler (which depends on the
+  // `text` callback) keeps a stable reference across renders. Resolves the
+  // markdown lazily from whichever version is displayed. Declared before the
+  // early returns below to keep hook order stable.
+  const copyMarkdown = useCallback(() => {
+    if (!artifact) return undefined;
+    const shownVersion = selectedVersion ?? artifact.version;
+    const showingHistorical = shownVersion !== artifact.version;
+    return (showingHistorical ? historicalVersion : artifact)?.contentMarkdown;
+  }, [artifact, selectedVersion, historicalVersion]);
+
   if (artifact === undefined) {
     return <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", className)} />;
   }
@@ -127,7 +138,6 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
   const versionIsLoading = displayedArtifact === undefined;
   const versionIsMissing = displayedArtifact === null;
   const copyIsDisabled = versionIsLoading || versionIsMissing;
-  const copyMarkdown = () => displayedArtifact?.contentMarkdown;
 
   return (
     <div className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden", className)}>
@@ -256,7 +266,6 @@ function ReaderToolbar({
         size="sm"
         className="h-6 w-14 shrink-0 gap-1 px-1.5 text-[11px]"
         disabled={copyIsDisabled}
-        tabIndex={expanded ? undefined : -1}
       />
       <ReaderToolbarSeparator className="mr-1" />
     </FloatingExpandableToolbar>

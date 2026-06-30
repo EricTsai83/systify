@@ -153,7 +153,6 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
         <SidebarContent className="flex min-h-0 flex-1 flex-col">
           <RepositoryThreadsRail
             repositoryId={selectedRepositoryId}
-            repositories={repositories}
             threadMode={effectiveChatMode}
             selectedThreadId={selectedThreadId}
             onSelectThread={onSelectThread}

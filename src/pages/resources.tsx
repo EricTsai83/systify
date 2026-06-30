@@ -37,9 +37,9 @@ import { DEFAULT_AUTHENTICATED_PATH, repositoryPath } from "@/route-paths";
 /**
  * Resources — viewer-scoped inventory of the viewer's active repositories
  * with their live sandbox state. Surfaces what the per-thread TopBar's
- * StatusPill shows, but at user-aggregate granularity, so a viewer
- * who is in Discuss mode (where the pill is intentionally hidden) still
- * has a single place to answer "what is my system doing right now".
+ * "Repository status" panel shows, but at user-aggregate granularity, so a
+ * viewer has a single place to answer "what is my system doing right now"
+ * across every repository at once.
  *
  * Repository-centric resource control plane. It keeps the actions scoped to
  * one repository at a time: open the repo for sync/history work, and stop the

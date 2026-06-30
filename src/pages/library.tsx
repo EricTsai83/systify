@@ -395,8 +395,6 @@ function LibraryRepository({
             void navigate(modeAwareThreadPath(movedRepositoryId, askThreadId, threadMode));
           }}
           isDesktopLayout={isDesktopLayout}
-          onSearchThreads={() => {}}
-          onNewThread={() => {}}
           onSync={() => void handleSync()}
           syncDisabledReason={syncDisabledReason}
           onViewArtifact={handleSelectLibraryArtifact}
@@ -458,8 +456,6 @@ function LibraryRepository({
             <div className="flex min-h-0 flex-1 flex-col">
               <StatusPanel
                 repository={repoDetail.repository}
-                sandboxModeStatus={repoDetail.sandboxModeStatus}
-                sandbox={repoDetail.sandbox}
                 jobs={repoDetail.jobs}
                 artifacts={repoDetail.artifacts}
                 hasRemoteUpdates={repoDetail.hasRemoteUpdates}

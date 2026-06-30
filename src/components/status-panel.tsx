@@ -15,7 +15,8 @@ import { ButtonStateText } from "@/components/ui/button-state-text";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { useRelativeTime } from "@/hooks/use-relative-time";
-import type { ArtifactId, SandboxModeStatus } from "@/lib/types";
+import type { ArtifactId } from "@/lib/types";
+import { getSyncActionLabel, SYNC_ACTION_LABEL_STATES } from "@/lib/sync-action";
 import { cn } from "@/lib/utils";
 import {
   formatArtifactKind,
@@ -29,8 +30,6 @@ import {
 
 type StatusPanelProps = {
   repository: Doc<"repositories">;
-  sandboxModeStatus: SandboxModeStatus;
-  sandbox: { status: string; ttlExpiresAt: number } | null;
   jobs: Doc<"jobs">[];
   artifacts: Doc<"artifacts">[];
   hasRemoteUpdates: boolean;
@@ -48,13 +47,15 @@ type StatusPanelProps = {
 };
 
 /**
- * StatusPanel — the on-demand repository operations surface. Surfaced via
- * the top-bar status pill so the chat surface stays uncluttered.
+ * StatusPanel — the on-demand repository operations surface. Opened from the
+ * top-bar kebab's "Repository status" item (a desktop Dialog, or a bottom
+ * Drawer owned by the parent shell on mobile) so the chat surface stays
+ * uncluttered.
  *
  * Two sections, top-to-bottom:
- *   1. Status cards — Repository intelligence and Live source. Same
- *      `present*Surface` helpers as the previous deck, so wording stays
- *      aligned with the chat ticker.
+ *   1. Status card — Repository intelligence, via the same
+ *      `presentRepositoryIntelligenceSurface` helper as the chat ticker so
+ *      wording stays aligned.
  *   2. Activity — user-relevant jobs with relative timestamps so two
  *      successive "Repository sync · Complete" rows can be told apart.
  */
@@ -123,16 +124,8 @@ export function StatusPanel({
                   >
                     <ArrowsClockwiseIcon weight="bold" className={cn(repositoryBusy && "motion-safe:animate-spin")} />
                     <ButtonStateText
-                      current={
-                        repositoryBusy
-                          ? "Syncing…"
-                          : hasRemoteUpdates
-                            ? "Needs update"
-                            : repositoryFailed
-                              ? "Retry sync"
-                              : "Sync repository"
-                      }
-                      states={["Needs update", "Retry sync", "Syncing…", "Sync repository"]}
+                      current={getSyncActionLabel({ isBusy: repositoryBusy, hasRemoteUpdates, repositoryFailed })}
+                      states={SYNC_ACTION_LABEL_STATES}
                     />
                   </Button>
                 ) : null

@@ -8,12 +8,12 @@ import type { ArtifactId, FolderId } from "@/lib/types";
  * so the active Library reader and its breadcrumb stay live-reactive.
  *
  * Convex's `useQuery` re-subscribes from scratch when its args change,
- * returning `undefined` until the server responds — that gap is the
- * `EditorSkeleton` flash users see when the reader changes. By subscribing
- * in parallel at a parent level via `useQueries`, the data for these
- * artifacts is already on the client. When `LibraryEditor`'s `useQuery`
- * mounts with the same `(query, args)` it shares the same ref-counted
- * subscription and returns the value synchronously.
+ * returning `undefined` until the server responds — that gap is the empty
+ * loading state users see when the reader changes. By subscribing in
+ * parallel at a parent level via `useQueries`, the data for these artifacts
+ * is already on the client. When `LibraryEditor`'s `useQuery` mounts with
+ * the same `(query, args)` it shares the same ref-counted subscription and
+ * returns the value synchronously.
  *
  * This is *not* a cache — every entry is a real, server-pushed
  * subscription, so server-side edits stream in normally with no stale

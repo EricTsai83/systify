@@ -23,6 +23,7 @@ import { ChatModeControls } from "@/components/chat-mode-controls";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import type { AttachedRepositorySummary } from "@/hooks/use-thread-capabilities";
+import { getSyncActionLabel } from "@/lib/sync-action";
 import type { ArtifactId, RepositoryId, SandboxModeStatus, ThreadId, ThreadMode } from "@/lib/types";
 
 export type TopBarRepoDetail = {
@@ -59,8 +60,6 @@ type TopBarStatusControl =
       isOpen: boolean;
       onOpenChange: (open: boolean) => void;
       repository: TopBarRepoDetail["repository"];
-      sandboxModeStatus: TopBarRepoDetail["sandboxModeStatus"];
-      sandbox: TopBarRepoDetail["sandbox"];
       jobs: TopBarRepoDetail["jobs"];
       artifacts: TopBarRepoDetail["artifacts"];
       hasRemoteUpdates: boolean;
@@ -76,16 +75,14 @@ type TopBarStatusControl =
  *   - sidebar toggle + repo title chip (with detail popover)
  *   - swap-repo affordance when the active thread is bound and other
  *     repos are available
- *   - the StatusPill, which doubles as the trigger for an inline Popover
- *     (desktop) or a bottom Sheet (mobile) carrying the on-demand
- *     {@link StatusPanel} — sync, run analysis, activity history all live
- *     inside that panel
- *   - a kebab menu for repo-level destructive actions (currently just
- *     Delete repository)
+ *   - a kebab menu carrying repo-level actions: the sync shortcut, a
+ *     "Repository status" entry that opens the on-demand {@link StatusPanel}
+ *     as a desktop Dialog (on mobile the parent shell renders the same panel
+ *     in a bottom Drawer), and archive / restore / delete
  *
- * Why a Popover (instead of an inline right-side column): the StatusPanel
- * carries on-demand reference data, but chat should remain the primary
- * surface. Status overlays only when the user explicitly asks for it.
+ * Why on-demand (instead of an inline right-side column): the StatusPanel
+ * carries reference data, but chat should remain the primary surface. Status
+ * overlays only when the user explicitly asks for it.
  */
 export function TopBar({
   repoDetail,
@@ -133,15 +130,16 @@ export function TopBar({
   onPermanentDeleteRepo: () => void;
   onThreadMovedToRepository: (repositoryId: RepositoryId | null, mode: ThreadMode | null) => void;
   isDesktopLayout: boolean;
-  onSearchThreads: () => void;
-  onNewThread: () => void;
+  onSearchThreads?: () => void;
+  onNewThread?: () => void;
   onSync: () => void;
   syncDisabledReason?: string;
   onViewArtifact: (artifactId: ArtifactId) => void;
   /**
-   * Whether the system-status chrome (StatusPill + sandbox badge next to the
-   * title) is allowed to render. The repository shell drives this from the
-   * repository actually backing the current surface or attached thread.
+   * Whether the system-status chrome (the sandbox badge next to the title and
+   * the kebab's sync / "Repository status" entries) is allowed to render. The
+   * repository shell drives this from the repository actually backing the
+   * current surface or attached thread.
    */
   showSystemStatus: boolean;
   showRepositoryTitle?: boolean;
@@ -155,8 +153,6 @@ export function TopBar({
           isOpen: isStatusPanelOpen,
           onOpenChange: onSetStatusPanelOpen,
           repository: repoDetail.repository,
-          sandboxModeStatus: repoDetail.sandboxModeStatus,
-          sandbox: repoDetail.sandbox,
           jobs: repoDetail.jobs,
           artifacts: repoDetail.artifacts,
           hasRemoteUpdates: repoDetail.hasRemoteUpdates,
@@ -184,9 +180,10 @@ export function TopBar({
           availableRepositories={availableRepositories}
           onThreadMovedToRepository={onThreadMovedToRepository}
         />
-        {centerActions ?? (
-          <ChatModeControls showSidebarToggle={false} onSearchThreads={onSearchThreads} onNewThread={onNewThread} />
-        )}
+        {centerActions ??
+          (onSearchThreads && onNewThread ? (
+            <ChatModeControls showSidebarToggle={false} onSearchThreads={onSearchThreads} onNewThread={onNewThread} />
+          ) : null)}
 
         <div className="ml-auto flex items-center gap-1.5">
           {rightActions}
@@ -299,8 +296,6 @@ function DesktopStatusDialog({
         </DialogDescription>
         <StatusPanel
           repository={statusControl.repository}
-          sandboxModeStatus={statusControl.sandboxModeStatus}
-          sandbox={statusControl.sandbox}
           jobs={statusControl.jobs}
           artifacts={statusControl.artifacts}
           hasRemoteUpdates={statusControl.hasRemoteUpdates}
@@ -331,14 +326,16 @@ function RepositoryActionsMenu({
   const repositoryFailed = repoDetail?.repository.importStatus === "failed";
   const shouldShowSyncAction = statusControl.isVisible && (statusControl.hasRemoteUpdates || repositoryFailed);
   const canSync = statusControl.isVisible && !statusControl.isSyncing && statusControl.syncDisabledReason === undefined;
-  const syncLabel =
-    statusControl.isVisible && statusControl.isSyncing
-      ? "Syncing…"
-      : statusControl.isVisible && statusControl.hasRemoteUpdates
-        ? "Needs update"
-        : repositoryFailed
-          ? "Retry sync"
-          : null;
+  // The kebab only renders this action when `shouldShowSyncAction` is true, so
+  // the idle "Sync repository" label is never actually shown here — but the
+  // shared helper keeps the wording in lockstep with the StatusPanel card.
+  const syncLabel = statusControl.isVisible
+    ? getSyncActionLabel({
+        isBusy: statusControl.isSyncing,
+        hasRemoteUpdates: statusControl.hasRemoteUpdates,
+        repositoryFailed,
+      })
+    : null;
 
   return (
     <DropdownMenu>

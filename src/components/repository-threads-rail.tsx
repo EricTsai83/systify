@@ -232,7 +232,6 @@ export function RepositoryThreadsRail({
   createControl = { kind: "createDiscuss" },
 }: {
   repositoryId: RepositoryId | null;
-  repositories: Doc<"repositories">[] | undefined;
   threadMode: ThreadModeFilter;
   selectedThreadId: ThreadId | null;
   onSelectThread: (id: ThreadId | null, mode: ThreadMode) => void;
@@ -771,7 +770,7 @@ function ThreadRowActionsOverlay({
         aria-pressed={isPinned}
         title={isPinned ? "Unpin thread" : "Pin thread"}
       >
-        {isPinned ? <PushPinSimpleSlashIcon size={8} weight="bold" /> : <PushPinSimpleIcon size={8} weight="bold" />}
+        {isPinned ? <PushPinSimpleSlashIcon size={13} weight="bold" /> : <PushPinSimpleIcon size={13} weight="bold" />}
       </Button>
       <Button
         variant="ghost"
@@ -784,7 +783,7 @@ function ThreadRowActionsOverlay({
         aria-label="Archive thread"
         title="Archive thread"
       >
-        <ArchiveIcon size={8} weight="bold" />
+        <ArchiveIcon size={13} weight="bold" />
       </Button>
     </div>
   );
